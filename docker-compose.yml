@@ -29,6 +29,8 @@ services:
     image: ghcr.io/saleor/saleor-dashboard:latest
     ports:
       - 9000:80
+    networks:
+      - saleor-backend-tier
     restart: unless-stopped
 
   db:
@@ -103,5 +105,6 @@ volumes:
 
 networks:
   saleor-backend-tier:
+    name: saleor-backend-tier
     driver: bridge
     attachable: true

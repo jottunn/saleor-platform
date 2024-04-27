@@ -1,6 +1,8 @@
 services:
   api:
-    image: ghcr.io/saleor/saleor:3.19
+    build:
+      context: .
+      dockerfile: ./docker/saleor-core/Dockerfile
     ports:
       - 8000:8000
     restart: unless-stopped

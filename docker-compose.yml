@@ -20,10 +20,6 @@ services:
     env_file:
       - common.env
       - backend.env
-    environment:
-      - JAEGER_AGENT_HOST=jaeger
-      - DASHBOARD_URL=http://localhost:9000/
-      - ALLOWED_HOSTS=localhost,api
 
   dashboard:
     image: ghcr.io/saleor/saleor-dashboard:latest
@@ -43,9 +39,8 @@ services:
     volumes:
       - saleor-db:/var/lib/postgresql/data
       - ./replica_user.sql:/docker-entrypoint-initdb.d/replica_user.sql
-    environment:
-      - POSTGRES_USER=saleor
-      - POSTGRES_PASSWORD=saleor
+    env_file:
+      - backend.env
 
   redis:
     image: library/redis:7.0-alpine

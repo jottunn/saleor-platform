@@ -27,6 +27,8 @@ services:
       - 9000:80
     networks:
       - saleor-backend-tier
+    env_file:
+      - frontend.env
     restart: unless-stopped
 
   db:

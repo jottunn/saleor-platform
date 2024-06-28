@@ -537,7 +537,7 @@ CELERY_ACCEPT_CONTENT = ["json"]
 CELERY_TASK_SERIALIZER = "json"
 CELERY_RESULT_SERIALIZER = "json"
 CELERY_RESULT_BACKEND = os.environ.get("CELERY_RESULT_BACKEND", None)
-CELERY_BEAT_SCHEDULER = "saleor.schedulers.schedulers.DatabaseScheduler"
+CELERY_BEAT_SCHEDULER = "saleor.schedulers.schedulers.PersistentScheduler"
 CELERY_TASK_ROUTES = {
     "saleor.plugins.webhook.tasks.observability_reporter_task": {
         "queue": "observability"

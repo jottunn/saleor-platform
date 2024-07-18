@@ -1,4 +1,4 @@
-FROM ghcr.io/saleor/saleor:3.19
+FROM ghcr.io/saleor/saleor:3.20
 
 LABEL ro.surmont.service: "api"
 LABEL ro.surmont.description: "surmontsaleor core contained"

@@ -55,7 +55,7 @@ services:
       - saleor-redis:/data
 
   worker:
-    image: ghcr.io/saleor/saleor:3.19
+    image: ghcr.io/saleor/saleor:3.20
     command: celery -A saleor --app=saleor.celeryconf:app worker --loglevel=info -B
     restart: unless-stopped
     networks:

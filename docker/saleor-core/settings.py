@@ -1,4 +1,3 @@
-import ast
 import logging
 import os
 import os.path
@@ -29,6 +28,7 @@ from sentry_sdk.integrations.logging import ignore_logger
 from . import PatchedSubscriberExecutionContext, __version__
 from .core.languages import LANGUAGES as CORE_LANGUAGES
 from .core.schedules import initiated_promotion_webhook_schedule
+from .graphql.executor import patch_executor
 
 django_stubs_ext.monkeypatch()
 
@@ -38,13 +38,14 @@ def get_list(text):
 
 
 def get_bool_from_env(name, default_value):
-    if name in os.environ:
-        value = os.environ[name]
-        try:
-            return ast.literal_eval(value)
-        except ValueError as e:
-            raise ValueError(f"{value} is an invalid value for {name}") from e
-    return default_value
+    """Retrieve and convert an environment variable to a boolean object.
+
+    Accepted values are `true` (case-insensitive) and `1`, any other value resolves to `False`.
+    """
+    value = os.environ.get(name)
+    if value is None:
+        return default_value
+    return value.lower() in ("true", "1")
 
 
 def get_url_from_env(name, *, schemes=None) -> Optional[str]:
@@ -110,6 +111,7 @@ DATABASES = {
         # and we need to update docs.
         # default="postgres://saleor_read_only:saleor@localhost:5432/saleor",
         conn_max_age=DB_CONN_MAX_AGE,
+        test_options={"MIRROR": DATABASE_CONNECTION_DEFAULT_NAME},
     ),
 }
 
@@ -146,6 +148,18 @@ EMAIL_PORT: str = str(email_config.get("EMAIL_PORT", ""))
 EMAIL_BACKEND: str = email_config.get("EMAIL_BACKEND", "")
 EMAIL_USE_TLS: bool = email_config.get("EMAIL_USE_TLS", False)
 EMAIL_USE_SSL: bool = email_config.get("EMAIL_USE_SSL", False)
+
+# SMTP configuration for UserEmailPlugin can be achieved by setting USER_EMAIL_URL.
+# Providing that variable means that SMTP configuration for this plugin is not required.
+user_email_config = dj_email_url.parse(os.environ.get("USER_EMAIL_URL", ""))
+
+USER_EMAIL_HOST_USER: str = user_email_config.get("EMAIL_HOST_USER") or ""
+USER_EMAIL_HOST_PASSWORD: str = user_email_config.get("EMAIL_HOST_PASSWORD") or ""
+USER_EMAIL_HOST: str = user_email_config.get("EMAIL_HOST") or ""
+USER_EMAIL_PORT: str = str(user_email_config.get("EMAIL_PORT") or "")
+
+USER_EMAIL_USE_TLS: bool = user_email_config.get("EMAIL_USE_TLS", False)
+USER_EMAIL_USE_SSL: bool = user_email_config.get("EMAIL_USE_SSL", False)
 
 ENABLE_SSL: bool = get_bool_from_env("ENABLE_SSL", False)
 
@@ -230,6 +244,12 @@ MIDDLEWARE = [
     "django.middleware.common.CommonMiddleware",
     "saleor.core.middleware.jwt_refresh_token_middleware",
 ]
+
+ENABLE_RESTRICT_WRITER_MIDDLEWARE = get_bool_from_env(
+    "ENABLE_RESTRICT_WRITER_MIDDLEWARE", False
+)
+if ENABLE_RESTRICT_WRITER_MIDDLEWARE:
+    MIDDLEWARE = ["saleor.core.db.connection.log_writer_usage_middleware"] + MIDDLEWARE
 
 INSTALLED_APPS = [
     # External apps that need to go before django's
@@ -538,14 +558,6 @@ CELERY_TASK_SERIALIZER = "json"
 CELERY_RESULT_SERIALIZER = "json"
 CELERY_RESULT_BACKEND = os.environ.get("CELERY_RESULT_BACKEND", None)
 CELERY_BEAT_SCHEDULER = "saleor.schedulers.schedulers.PersistentScheduler"
-CELERY_TASK_ROUTES = {
-    "saleor.plugins.webhook.tasks.observability_reporter_task": {
-        "queue": "observability"
-    },
-    "saleor.plugins.webhook.tasks.observability_send_events": {
-        "queue": "observability"
-    },
-}
 
 # Expire orders task setting
 BEAT_EXPIRE_ORDERS_AFTER_TIMEDELTA = timedelta(
@@ -689,7 +701,7 @@ OBSERVABILITY_BUFFER_TIMEOUT = timedelta(
 )
 if OBSERVABILITY_ACTIVE:
     CELERY_BEAT_SCHEDULE["observability-reporter"] = {
-        "task": "saleor.plugins.webhook.tasks.observability_reporter_task",
+        "task": "saleor.webhook.transport.asynchronous.transport.observability_reporter_task",  # noqa
         "schedule": OBSERVABILITY_REPORT_PERIOD,
         "options": {"expires": OBSERVABILITY_REPORT_PERIOD.total_seconds()},
     }
@@ -873,6 +885,8 @@ PRODUCT_MAX_INDEXED_VARIANTS = 1000
 
 executor.SubscriberExecutionContext = PatchedSubscriberExecutionContext  # type: ignore
 
+patch_executor()
+
 # Optional queue names for Celery tasks.
 # Set None to route to the default queue, or a string value to use a separate one
 #
@@ -882,6 +896,13 @@ UPDATE_SEARCH_VECTOR_INDEX_QUEUE_NAME = os.environ.get(
 )
 # Queue name for "async webhook" events
 WEBHOOK_CELERY_QUEUE_NAME = os.environ.get("WEBHOOK_CELERY_QUEUE_NAME", None)
+CHECKOUT_WEBHOOK_EVENTS_CELERY_QUEUE_NAME = os.environ.get(
+    "CHECKOUT_WEBHOOK_EVENTS_CELERY_QUEUE_NAME", WEBHOOK_CELERY_QUEUE_NAME
+)
+ORDER_WEBHOOK_EVENTS_CELERY_QUEUE_NAME = os.environ.get(
+    "ORDER_WEBHOOK_EVENTS_CELERY_QUEUE_NAME", WEBHOOK_CELERY_QUEUE_NAME
+)
+
 
 # Queue name for execution of collection product_updated events
 COLLECTION_PRODUCT_UPDATED_QUEUE_NAME = os.environ.get(
@@ -903,6 +924,17 @@ OAUTH_UPDATE_LAST_LOGIN_THRESHOLD = parse(
     os.environ.get("OAUTH_UPDATE_LAST_LOGIN_THRESHOLD", "15 minutes")
 )
 
+# Time threshold to update user last_login when using tokenCreate/tokenRefresh
+# mutations.
+TOKEN_UPDATE_LAST_LOGIN_THRESHOLD = parse(
+    os.environ.get("TOKEN_UPDATE_LAST_LOGIN_THRESHOLD", "5 seconds")
+)
+
+# Max lock time for checkout processing.
+# It prevents locking checkout when unhandled issue appears.
+CHECKOUT_COMPLETION_LOCK_TIME = parse(
+    os.environ.get("CHECKOUT_COMPLETION_LOCK_TIME", "3 minutes")
+)
 
 # Default timeout (sec) for establishing a connection when performing external requests.
 REQUESTS_CONN_EST_TIMEOUT = 2

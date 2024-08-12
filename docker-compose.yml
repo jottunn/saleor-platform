@@ -64,7 +64,9 @@ services:
       - /etc/localtime:/etc/localtime:ro
 
   worker:
-    image: ghcr.io/saleor/saleor:3.20
+    build:
+      context: .
+      dockerfile: ./docker/saleor-core/Dockerfile
     command: celery -A saleor --app=saleor.celeryconf:app worker --loglevel=info -B
     restart: unless-stopped
     networks:

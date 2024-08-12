@@ -17,6 +17,7 @@ services:
     volumes:
       # shared volume between worker and api for media
       - saleor-media:/app/media
+      - /etc/localtime:/etc/localtime:ro
     env_file:
       - common.env
       - backend.env
@@ -30,6 +31,8 @@ services:
     env_file:
       - frontend.env
     restart: unless-stopped
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
 
   db:
     image: library/postgres:13-alpine
@@ -41,8 +44,13 @@ services:
     volumes:
       - saleor-db:/var/lib/postgresql/data
       - ./replica_user.sql:/docker-entrypoint-initdb.d/replica_user.sql
+      - /etc/localtime:/etc/localtime:ro
+      - /etc/timezone:/etc/timezone:ro
     env_file:
       - backend.env
+    environment:
+      - TZ=Europe/Bucharest
+      - PGTZ=Europe/Bucharest
 
   redis:
     image: library/redis:7.0-alpine
@@ -53,6 +61,7 @@ services:
       - saleor-backend-tier
     volumes:
       - saleor-redis:/data
+      - /etc/localtime:/etc/localtime:ro
 
   worker:
     image: ghcr.io/saleor/saleor:3.20
@@ -69,6 +78,7 @@ services:
     volumes:
       # shared volume between worker and api for media
       - saleor-media:/app/media
+      - /etc/localtime:/etc/localtime:ro
 
   jaeger:
     image: jaegertracing/all-in-one
@@ -83,6 +93,8 @@ services:
     restart: unless-stopped
     networks:
       - saleor-backend-tier
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
 
   mailpit:
     image: axllent/mailpit
@@ -92,6 +104,8 @@ services:
     restart: unless-stopped
     networks:
       - saleor-backend-tier
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
 
 volumes:
   saleor-db:

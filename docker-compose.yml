@@ -35,7 +35,9 @@ services:
       - /etc/localtime:/etc/localtime:ro
 
   db:
-    image: library/postgres:13-alpine
+    build:
+      context: .
+      dockerfile: ./docker/db/Dockerfile
     ports:
       - 5432:5432
     restart: unless-stopped
@@ -44,13 +46,8 @@ services:
     volumes:
       - saleor-db:/var/lib/postgresql/data
       - ./replica_user.sql:/docker-entrypoint-initdb.d/replica_user.sql
-      - /etc/localtime:/etc/localtime:ro
-      - /etc/timezone:/etc/timezone:ro
     env_file:
       - backend.env
-    environment:
-      - TZ=Europe/Bucharest
-      - PGTZ=Europe/Bucharest
 
   redis:
     image: library/redis:7.0-alpine
@@ -67,7 +64,26 @@ services:
     build:
       context: .
       dockerfile: ./docker/saleor-core/Dockerfile
-    command: celery -A saleor --app=saleor.celeryconf:app worker --loglevel=info -B
+    command: celery -A saleor --app=saleor.celeryconf:app worker --loglevel=debug
+    restart: unless-stopped
+    networks:
+      - saleor-backend-tier
+    env_file:
+      - common.env
+      - backend.env
+    depends_on:
+      - redis
+      - mailpit
+    volumes:
+      # shared volume between worker and api for media
+      - saleor-media:/app/media
+      - /etc/localtime:/etc/localtime:ro
+
+  beat:
+    build:
+      context: .
+      dockerfile: ./docker/saleor-core/Dockerfile
+    command: celery -A saleor --app=saleor.celeryconf:app beat --loglevel=debug
     restart: unless-stopped
     networks:
       - saleor-backend-tier

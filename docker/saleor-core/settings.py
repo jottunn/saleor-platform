@@ -1,9 +1,10 @@
-import datetime
+import ast
 import logging
 import os
 import os.path
 import warnings
-from typing import cast
+from datetime import timedelta
+from typing import Optional
 from urllib.parse import urlparse
 
 import dj_database_url
@@ -27,9 +28,19 @@ from sentry_sdk.integrations.django import DjangoIntegration
 from sentry_sdk.integrations.logging import ignore_logger
 
 from . import PatchedSubscriberExecutionContext, __version__
+from .account.i18n_rules_override import i18n_rules_override
+from .core.db.patch import patch_db
 from .core.languages import LANGUAGES as CORE_LANGUAGES
 from .core.schedules import initiated_promotion_webhook_schedule
-from .graphql.executor import patch_executor
+from .graphql.graphql_core import (
+    patch_execution_context,
+    patch_execution_result,
+    patch_executor,
+)
+from .graphql.promise import patch_promise
+from .patch_gzip import patch_gzip
+from .patch_local import patch_local
+from .plugins.openid_connect.patch import patch_authlib
 
 django_stubs_ext.monkeypatch()
 
@@ -39,17 +50,16 @@ def get_list(text):
 
 
 def get_bool_from_env(name, default_value):
-    """Retrieve and convert an environment variable to a boolean object.
+    if name in os.environ:
+        value = os.environ[name]
+        try:
+            return ast.literal_eval(value)
+        except ValueError as e:
+            raise ValueError(f"{value} is an invalid value for {name}") from e
+    return default_value
 
-    Accepted values are `true` (case-insensitive) and `1`, any other value resolves to `False`.
-    """
-    value = os.environ.get(name)
-    if value is None:
-        return default_value
-    return value.lower() in ("true", "1")
 
-
-def get_url_from_env(name, *, schemes=None) -> str | None:
+def get_url_from_env(name, *, schemes=None) -> Optional[str]:
     if name in os.environ:
         value = os.environ[name]
         message = f"{value} is an invalid value for {name}"
@@ -124,10 +134,9 @@ DEFAULT_AUTO_FIELD = "django.db.models.AutoField"
 
 TIME_ZONE = os.environ.get("TIME_ZONE", "UTC")
 LANGUAGE_CODE = "en"
-LANGUAGES: list[tuple[str, str]] = CORE_LANGUAGES
+LANGUAGES = CORE_LANGUAGES
 LOCALE_PATHS = [os.path.join(PROJECT_ROOT, "locale")]
 USE_I18N = True
-USE_L10N = True
 USE_TZ = True
 
 FORM_RENDERER = "django.forms.renderers.TemplatesSetting"
@@ -168,13 +177,10 @@ ENABLE_SSL: bool = get_bool_from_env("ENABLE_SSL", False)
 
 # URL on which Saleor is hosted (e.g., https://api.example.com/). This has precedence
 # over ENABLE_SSL and Shop.domain when generating URLs pointing to itself.
-PUBLIC_URL: str | None = get_url_from_env("PUBLIC_URL", schemes=["http", "https"])
+PUBLIC_URL: Optional[str] = get_url_from_env("PUBLIC_URL", schemes=["http", "https"])
 if PUBLIC_URL:
     if os.environ.get("ENABLE_SSL") is not None:
-        warnings.warn(
-            "ENABLE_SSL is ignored on URL generation if PUBLIC_URL is set.",
-            stacklevel=1,
-        )
+        warnings.warn("ENABLE_SSL is ignored on URL generation if PUBLIC_URL is set.")
     ENABLE_SSL = urlparse(PUBLIC_URL).scheme.lower() == "https"
 
 if ENABLE_SSL:
@@ -236,9 +242,7 @@ PASSWORD_HASHERS = [
 ]
 
 if not SECRET_KEY and DEBUG:
-    warnings.warn(
-        "SECRET_KEY not configured, using a random temporary key.", stacklevel=1
-    )
+    warnings.warn("SECRET_KEY not configured, using a random temporary key.")
     SECRET_KEY = get_random_secret_key()
 
 RSA_PRIVATE_KEY = os.environ.get("RSA_PRIVATE_KEY", None)
@@ -258,9 +262,6 @@ ENABLE_RESTRICT_WRITER_MIDDLEWARE = get_bool_from_env(
 )
 if ENABLE_RESTRICT_WRITER_MIDDLEWARE:
     MIDDLEWARE = ["saleor.core.db.connection.log_writer_usage_middleware"] + MIDDLEWARE
-
-# Restrict inexplicit writer DB usage in Celery tasks
-CELERY_RESTRICT_WRITER_METHOD = "saleor.core.db.connection.log_writer_usage"
 
 INSTALLED_APPS = [
     # External apps that need to go before django's
@@ -313,6 +314,31 @@ if ENABLE_DJANGO_EXTENSIONS:
     INSTALLED_APPS += [
         "django_extensions",
     ]
+
+ENABLE_DEBUG_TOOLBAR = get_bool_from_env("ENABLE_DEBUG_TOOLBAR", False)
+if ENABLE_DEBUG_TOOLBAR:
+    # Ensure the graphiql debug toolbar is actually installed before adding it
+    try:
+        __import__("graphiql_debug_toolbar")
+    except ImportError as exc:
+        msg = (
+            f"{exc} -- Install the missing dependencies by "
+            f"running `poetry install --no-root`"
+        )
+        warnings.warn(msg)
+    else:
+        INSTALLED_APPS += ["django.forms", "debug_toolbar", "graphiql_debug_toolbar"]
+        MIDDLEWARE.append("saleor.graphql.middleware.DebugToolbarMiddleware")
+
+        DEBUG_TOOLBAR_PANELS = [
+            "ddt_request_history.panels.request_history.RequestHistoryPanel",
+            "debug_toolbar.panels.timer.TimerPanel",
+            "debug_toolbar.panels.headers.HeadersPanel",
+            "debug_toolbar.panels.request.RequestPanel",
+            "debug_toolbar.panels.sql.SQLPanel",
+            "debug_toolbar.panels.profiling.ProfilingPanel",
+        ]
+        DEBUG_TOOLBAR_CONFIG = {"RESULTS_CACHE_SIZE": 100}
 
 # Make the `logging` Python module capture `warnings.warn()` calls
 # This is needed in order to log them as JSON when DEBUG=False
@@ -420,7 +446,7 @@ AUTH_PASSWORD_VALIDATORS = [
     }
 ]
 
-DEFAULT_COUNTRY: str = os.environ.get("DEFAULT_COUNTRY", "US")
+DEFAULT_COUNTRY = os.environ.get("DEFAULT_COUNTRY", "US")
 DEFAULT_DECIMAL_PLACES = 3
 DEFAULT_MAX_DIGITS = 12
 DEFAULT_CURRENCY_CODE_LENGTH = 3
@@ -458,7 +484,6 @@ AWS_QUERYSTRING_EXPIRE = get_bool_from_env("AWS_QUERYSTRING_EXPIRE", 3600)
 AWS_S3_CUSTOM_DOMAIN = os.environ.get("AWS_STATIC_CUSTOM_DOMAIN")
 AWS_S3_ENDPOINT_URL = os.environ.get("AWS_S3_ENDPOINT_URL", None)
 AWS_S3_REGION_NAME = os.environ.get("AWS_S3_REGION_NAME", None)
-AWS_S3_URL_PROTOCOL = os.environ.get("AWS_S3_URL_PROTOCOL")
 AWS_SECRET_ACCESS_KEY = os.environ.get("AWS_SECRET_ACCESS_KEY")
 AWS_STORAGE_BUCKET_NAME = os.environ.get("AWS_STORAGE_BUCKET_NAME")
 AWS_DEFAULT_ACL = os.environ.get("AWS_DEFAULT_ACL", None)
@@ -477,9 +502,7 @@ GS_AUTO_CREATE_BUCKET = get_bool_from_env("GS_AUTO_CREATE_BUCKET", False)
 GS_QUERYSTRING_AUTH = get_bool_from_env("GS_QUERYSTRING_AUTH", False)
 GS_DEFAULT_ACL = os.environ.get("GS_DEFAULT_ACL", None)
 GS_MEDIA_CUSTOM_ENDPOINT = os.environ.get("GS_MEDIA_CUSTOM_ENDPOINT", None)
-GS_EXPIRATION = datetime.timedelta(
-    seconds=parse(os.environ.get("GS_EXPIRATION", "1 day"))
-)
+GS_EXPIRATION = timedelta(seconds=parse(os.environ.get("GS_EXPIRATION", "1 day")))
 GS_FILE_OVERWRITE = get_bool_from_env("GS_FILE_OVERWRITE", True)
 
 # If GOOGLE_APPLICATION_CREDENTIALS is set there is no need to load OAuth token
@@ -533,18 +556,18 @@ AUTHENTICATION_BACKENDS = [
 ]
 
 # Expired checkouts settings - defines after what time checkouts will be deleted
-ANONYMOUS_CHECKOUTS_TIMEDELTA = datetime.timedelta(
+ANONYMOUS_CHECKOUTS_TIMEDELTA = timedelta(
     seconds=parse(os.environ.get("ANONYMOUS_CHECKOUTS_TIMEDELTA", "30 days"))
 )
-USER_CHECKOUTS_TIMEDELTA = datetime.timedelta(
+USER_CHECKOUTS_TIMEDELTA = timedelta(
     seconds=parse(os.environ.get("USER_CHECKOUTS_TIMEDELTA", "90 days"))
 )
-EMPTY_CHECKOUTS_TIMEDELTA = datetime.timedelta(
+EMPTY_CHECKOUTS_TIMEDELTA = timedelta(
     seconds=parse(os.environ.get("EMPTY_CHECKOUTS_TIMEDELTA", "6 hours"))
 )
 
 # Exports settings - defines after what time exported files will be deleted
-EXPORT_FILES_TIMEDELTA = datetime.timedelta(
+EXPORT_FILES_TIMEDELTA = timedelta(
     seconds=parse(os.environ.get("EXPORT_FILES_TIMEDELTA", "30 days"))
 )
 
@@ -564,7 +587,7 @@ CELERY_WORKER_PREFETCH_MULTIPLIER = int(
 )
 
 # Expire orders task setting
-BEAT_EXPIRE_ORDERS_AFTER_TIMEDELTA = datetime.timedelta(
+BEAT_EXPIRE_ORDERS_AFTER_TIMEDELTA = timedelta(
     seconds=parse(os.environ.get("BEAT_EXPIRE_ORDERS_AFTER_TIMEDELTA", "5 minutes"))
 )
 
@@ -589,15 +612,15 @@ BEAT_PRICE_RECALCULATION_SCHEDULE_EXPIRE_AFTER_SEC = BEAT_PRICE_RECALCULATION_SC
 CELERY_BEAT_SCHEDULE = {
     "delete-empty-allocations": {
         "task": "saleor.warehouse.tasks.delete_empty_allocations_task",
-        "schedule": datetime.timedelta(days=1),
+        "schedule": timedelta(days=1),
     },
     "deactivate-preorder-for-variants": {
         "task": "saleor.product.tasks.deactivate_preorder_for_variants_task",
-        "schedule": datetime.timedelta(hours=1),
+        "schedule": timedelta(hours=1),
     },
     "delete-expired-reservations": {
         "task": "saleor.warehouse.tasks.delete_expired_reservations_task",
-        "schedule": datetime.timedelta(days=1),
+        "schedule": timedelta(days=1),
     },
     "delete-expired-checkouts": {
         "task": "saleor.checkout.tasks.delete_expired_checkouts",
@@ -609,7 +632,7 @@ CELERY_BEAT_SCHEDULE = {
     },
     "delete-outdated-event-data": {
         "task": "saleor.core.tasks.delete_event_payloads_task",
-        "schedule": datetime.timedelta(days=1),
+        "schedule": timedelta(days=1),
     },
     "deactivate-expired-gift-cards": {
         "task": "saleor.giftcard.tasks.deactivate_expired_cards_task",
@@ -628,13 +651,13 @@ CELERY_BEAT_SCHEDULE = {
         "schedule": initiated_promotion_webhook_schedule,
     },
     "update-products-search-vectors": {
-        "task": "saleor.product.tasks.update_products_search_vector_task",
-        "schedule": datetime.timedelta(seconds=BEAT_UPDATE_SEARCH_SEC),
+        "task": ("saleor.product.tasks.update_products_search_vector_task"),
+        "schedule": timedelta(seconds=BEAT_UPDATE_SEARCH_SEC),
         # "options": {"expires": BEAT_UPDATE_SEARCH_EXPIRE_AFTER_SEC}, #hyperplane
     },
     "update-gift-cards-search-vectors": {
-        "task": "saleor.giftcard.tasks.update_gift_cards_search_vector_task",
-        "schedule": datetime.timedelta(seconds=BEAT_UPDATE_SEARCH_SEC),
+        "task": ("saleor.giftcard.tasks.update_gift_cards_search_vector_task"),
+        "schedule": timedelta(seconds=BEAT_UPDATE_SEARCH_SEC),
         # "options": {"expires": BEAT_UPDATE_SEARCH_EXPIRE_AFTER_SEC}, #hyperplane
     },
     "expire-orders": {
@@ -647,19 +670,19 @@ CELERY_BEAT_SCHEDULE = {
     },
     "release-funds-for-abandoned-checkouts": {
         "task": "saleor.payment.tasks.transaction_release_funds_for_checkout_task",
-        "schedule": datetime.timedelta(minutes=10),
+        "schedule": timedelta(minutes=10),
     },
     "recalculate-promotion-rules": {
         "task": (
             "saleor.product.tasks"
             ".update_variant_relations_for_active_promotion_rules_task"
         ),
-        "schedule": datetime.timedelta(seconds=BEAT_PRICE_RECALCULATION_SCHEDULE),
+        "schedule": timedelta(seconds=BEAT_PRICE_RECALCULATION_SCHEDULE),
         # "options": {"expires": BEAT_PRICE_RECALCULATION_SCHEDULE_EXPIRE_AFTER_SEC}, #hyperplane
     },
     "recalculate-discounted-price-for-products": {
         "task": "saleor.product.tasks.recalculate_discounted_price_for_products_task",
-        "schedule": datetime.timedelta(seconds=BEAT_PRICE_RECALCULATION_SCHEDULE),
+        "schedule": timedelta(seconds=BEAT_PRICE_RECALCULATION_SCHEDULE),
         # "options": {"expires": BEAT_PRICE_RECALCULATION_SCHEDULE_EXPIRE_AFTER_SEC}, #hyperplane
     },
 }
@@ -669,10 +692,10 @@ CELERY_BEAT_SCHEDULE = {
 # is_due() calls
 CELERY_BEAT_MAX_LOOP_INTERVAL = 300  # 5 minutes
 
-EVENT_PAYLOAD_DELETE_PERIOD = datetime.timedelta(
+EVENT_PAYLOAD_DELETE_PERIOD = timedelta(
     seconds=parse(os.environ.get("EVENT_PAYLOAD_DELETE_PERIOD", "14 days"))
 )
-EVENT_PAYLOAD_DELETE_TASK_TIME_LIMIT = datetime.timedelta(
+EVENT_PAYLOAD_DELETE_TASK_TIME_LIMIT = timedelta(
     seconds=parse(os.environ.get("EVENT_PAYLOAD_DELETE_TASK_TIME_LIMIT", "1 hour"))
 )
 EVENT_DELIVERY_ATTEMPT_RESPONSE_SIZE_LIMIT = int(
@@ -682,7 +705,7 @@ EVENT_DELIVERY_ATTEMPT_RESPONSE_SIZE_LIMIT = int(
 # App is not visible for the user after removing, but it still exists in the database.
 # Saleor needs time to process sending `APP_DELETED` webhook and possible retrying,
 # so we need to wait for some time before removing the App from the database.
-DELETE_APP_TTL = datetime.timedelta(
+DELETE_APP_TTL = timedelta(
     seconds=parse(os.environ.get("DELETE_APP_TTL", "1 day"))
 )
 
@@ -702,23 +725,22 @@ OBSERVABILITY_BUFFER_SIZE_LIMIT = int(
 OBSERVABILITY_BUFFER_BATCH_SIZE = int(
     os.environ.get("OBSERVABILITY_BUFFER_BATCH_SIZE", 100)
 )
-OBSERVABILITY_REPORT_PERIOD = datetime.timedelta(
+OBSERVABILITY_REPORT_PERIOD = timedelta(
     seconds=parse(os.environ.get("OBSERVABILITY_REPORT_PERIOD", "20 seconds"))
 )
-OBSERVABILITY_BUFFER_TIMEOUT = datetime.timedelta(
+OBSERVABILITY_BUFFER_TIMEOUT = timedelta(
     seconds=parse(os.environ.get("OBSERVABILITY_BUFFER_TIMEOUT", "5 minutes"))
 )
 if OBSERVABILITY_ACTIVE:
     CELERY_BEAT_SCHEDULE["observability-reporter"] = {
-        "task": "saleor.webhook.transport.asynchronous.transport.observability_reporter_task",
+        "task": "saleor.webhook.transport.asynchronous.transport.observability_reporter_task",  # noqa
         "schedule": OBSERVABILITY_REPORT_PERIOD,
         "options": {"expires": OBSERVABILITY_REPORT_PERIOD.total_seconds()},
     }
     if OBSERVABILITY_BUFFER_TIMEOUT < OBSERVABILITY_REPORT_PERIOD * 2:
         warnings.warn(
             "OBSERVABILITY_REPORT_PERIOD is too big compared to "
-            "OBSERVABILITY_BUFFER_TIMEOUT. That can lead to a loss of events.",
-            stacklevel=1,
+            "OBSERVABILITY_BUFFER_TIMEOUT. That can lead to a loss of events."
         )
 
 # Change this value if your application is running behind a proxy,
@@ -754,7 +776,7 @@ def SENTRY_INIT(dsn: str, sentry_opts: dict):
     ignore_logger("graphql.execution.executor")
 
 
-GRAPHQL_PAGINATION_LIMIT = 1000
+GRAPHQL_PAGINATION_LIMIT = 100
 GRAPHQL_MIDDLEWARE: list[str] = []
 
 # Set GRAPHQL_QUERY_MAX_COMPLEXITY=0 in env to disable (not recommended)
@@ -780,6 +802,7 @@ BUILTIN_PLUGINS = [
     "saleor.payment.gateways.adyen.plugin.AdyenGatewayPlugin",
     "saleor.payment.gateways.authorize_net.plugin.AuthorizeNetGatewayPlugin",
     "saleor.payment.gateways.np_atobarai.plugin.NPAtobaraiGatewayPlugin",
+    "saleor.plugins.invoicing.plugin.InvoicingPlugin",
     "saleor.plugins.user_email.plugin.UserEmailPlugin",
     "saleor.plugins.admin_email.plugin.AdminEmailPlugin",
     "saleor.plugins.sendgrid.plugin.SendgridEmailPlugin",
@@ -847,26 +870,22 @@ CACHES = {"default": django_cache_url.config()}
 CACHES["default"]["TIMEOUT"] = parse(os.environ.get("CACHE_TIMEOUT", "7 days"))
 
 JWT_EXPIRE = True
-JWT_TTL_ACCESS = datetime.timedelta(
-    seconds=parse(os.environ.get("JWT_TTL_ACCESS", "5 minutes"))
-)
-JWT_TTL_APP_ACCESS = datetime.timedelta(
+JWT_TTL_ACCESS = timedelta(seconds=parse(os.environ.get("JWT_TTL_ACCESS", "5 minutes")))
+JWT_TTL_APP_ACCESS = timedelta(
     seconds=parse(os.environ.get("JWT_TTL_APP_ACCESS", "5 minutes"))
 )
-JWT_TTL_REFRESH = datetime.timedelta(
-    seconds=parse(os.environ.get("JWT_TTL_REFRESH", "30 days"))
-)
+JWT_TTL_REFRESH = timedelta(seconds=parse(os.environ.get("JWT_TTL_REFRESH", "30 days")))
 
 
-JWT_TTL_REQUEST_EMAIL_CHANGE = datetime.timedelta(
+JWT_TTL_REQUEST_EMAIL_CHANGE = timedelta(
     seconds=parse(os.environ.get("JWT_TTL_REQUEST_EMAIL_CHANGE", "1 hour")),
 )
 
-CHECKOUT_PRICES_TTL = datetime.timedelta(
+CHECKOUT_PRICES_TTL = timedelta(
     seconds=parse(os.environ.get("CHECKOUT_PRICES_TTL", "1 hour"))
 )
 
-CHECKOUT_TTL_BEFORE_RELEASING_FUNDS = datetime.timedelta(
+CHECKOUT_TTL_BEFORE_RELEASING_FUNDS = timedelta(
     seconds=parse(os.environ.get("CHECKOUT_TTL_BEFORE_RELEASING_FUNDS", "6 hours"))
 )
 CHECKOUT_BATCH_FOR_RELEASING_FUNDS = os.environ.get(
@@ -896,7 +915,7 @@ PRODUCT_MAX_INDEXED_VARIANTS = 1000
 # Patch SubscriberExecutionContext class from `graphql-core-legacy` package
 # to fix bug causing not returning errors for subscription queries.
 
-executor.SubscriberExecutionContext = PatchedSubscriberExecutionContext  # type: ignore[assignment,misc]
+executor.SubscriberExecutionContext = PatchedSubscriberExecutionContext  # type: ignore
 
 patch_executor()
 
@@ -957,8 +976,8 @@ TOKEN_UPDATE_LAST_LOGIN_THRESHOLD = parse(
 
 # Max lock time for checkout processing.
 # It prevents locking checkout when unhandled issue appears.
-CHECKOUT_COMPLETION_LOCK_TIME: int = cast(
-    int, parse(os.environ.get("CHECKOUT_COMPLETION_LOCK_TIME", "3 minutes"))
+CHECKOUT_COMPLETION_LOCK_TIME = parse(
+    os.environ.get("CHECKOUT_COMPLETION_LOCK_TIME", "3 minutes")
 )
 
 # Default timeout (sec) for establishing a connection when performing external requests.
@@ -992,10 +1011,49 @@ ENABLE_LIMITING_WEBHOOKS_FOR_IDENTICAL_PAYLOADS = get_bool_from_env(
 TRANSACTION_ITEMS_LIMIT = 100
 
 
+# The manager.perform_mutation method is deprecated and will be removed in Saleor 3.21.
+# It is enabled by default, but can be disabled by setting the environment variable to
+# False.
+ENABLE_DEPRECATED_MANAGER_PERFORM_MUTATION = get_bool_from_env(
+    "ENABLE_DEPRECATED_MANAGER_PERFORM_MUTATION", True
+)
+
+
 # Disable Django warnings regarding too long cache keys being incompatible with
 # memcached to avoid leaking key values.
 warnings.filterwarnings("ignore", category=CacheKeyWarning)
 
-ENABLE_DEPRECATED_MANAGER_PERFORM_MUTATION = get_bool_from_env(
-    "ENABLE_DEPRECATED_MANAGER_PERFORM_MUTATION", True
-)
+
+# Library `google-i18n-address` use `AddressValidationMetadata` form Google to provide address validation rules.
+# Patch `i18n` module to allows to override the default address rules.
+i18n_rules_override()
+
+
+# Patch Promise to remove all references that could result in reference cycles, allowing memory to be freed
+# immediately, without the need of a deep garbage collection cycle.
+patch_promise()
+
+# Patch `OAuth2Session` and `TokenAuth` to remove all references that could result in reference cycles,
+# allowing memory to be freed immediately, without the need of a deep garbage collection cycle.
+patch_authlib()
+
+# Patch `Local` to remove all references that could result in reference cycles,
+# allowing memory to be freed immediately, without the need of a deep garbage collection cycle.
+patch_local()
+
+# Patch `DatabaseClient`, `DatabaseCreation`, `DatabaseFeatures`, `DatabaseIntrospection`, `DatabaseOperations`,
+# `BaseDatabaseValidation` and `DatabaseErrorWrapper` to remove all references that could result in reference cycles,
+# allowing memory to be freed immediately, without the need of a deep garbage collection cycle.
+patch_db()
+
+# Patch `_WriteBufferStream` from `gizip` to remove all references that could result in reference cycles,
+# allowing memory to be freed immediately, without the need of a deep garbage collection cycle.
+patch_gzip()
+
+# Patch `ExecutionContext` to remove all references that could result in reference cycles,
+# allowing memory to be freed immediately, without the need of a deep garbage collection cycle.
+patch_execution_context()
+
+# Patch `ExecutionResult` to remove all references that could result in reference cycles,
+# allowing memory to be freed immediately, without the need of a deep garbage collection cycle.
+patch_execution_result()

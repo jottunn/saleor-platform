@@ -1,5 +1,6 @@
 services:
   api:
+    pull_policy: always
     build:
       context: .
       dockerfile: ./docker/saleor-core/Dockerfile
@@ -23,6 +24,7 @@ services:
       - backend.env
 
   dashboard:
+    pull_policy: always
     image: ghcr.io/saleor/saleor-dashboard:latest
     ports:
       - 9000:80

@@ -80,6 +80,8 @@ services:
       # shared volume between worker and api for media
       - saleor-media:/app/media
       - /etc/localtime:/etc/localtime:ro
+      - type: tmpfs
+        target: /tmp
 
   beat:
     build:

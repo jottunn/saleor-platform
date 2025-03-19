@@ -1,3 +1,2 @@
-FROM library/postgres:13-alpine
+FROM library/postgres:15-alpine
 
-COPY docker/db/postgresql.conf  /var/lib/postgresql/data/postgresql.conf

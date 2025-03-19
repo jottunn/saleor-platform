@@ -48,6 +48,8 @@ services:
     volumes:
       - saleor-db:/var/lib/postgresql/data
       - ./replica_user.sql:/docker-entrypoint-initdb.d/replica_user.sql
+      - ./docker/db/postgresql.conf:/var/lib/postgresql/data/postgresql.conf
+      - /etc/localtime:/etc/localtime:ro
     env_file:
       - backend.env
 

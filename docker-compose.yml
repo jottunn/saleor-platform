@@ -4,8 +4,38 @@ services:
     build:
       context: .
       dockerfile: ./docker/saleor-core/Dockerfile
-    ports:
-      - 8000:8000
+    labels:
+      # Base traefik enable
+      - "traefik.enable=true"
+      # JWKS route
+      - "traefik.http.services.jwks-service.loadbalancer.server.port=8000"
+      - "traefik.http.routers.jwks.rule=Host(`surmont.ro`) && PathPrefix(`/.well-known`)"
+      - "traefik.http.routers.jwks.service=jwks-service"
+      - "traefik.http.routers.jwks.entrypoints=websecure"
+      - "traefik.http.routers.jwks.tls=true"
+      - "traefik.http.routers.jwks.tls.certresolver=cloudflare"
+      # Service definitions
+      - "traefik.http.services.graphql-service.loadbalancer.server.port=8000"
+      - "traefik.http.services.media-service.loadbalancer.server.port=8000"
+      - "traefik.http.services.thumbnail-service.loadbalancer.server.port=8000"
+      # GraphQL API route
+      - "traefik.http.routers.graphql.rule=Host(`surmont.ro`) && PathPrefix(`/graphql`)"
+      - "traefik.http.routers.graphql.service=graphql-service"
+      - "traefik.http.routers.graphql.entrypoints=websecure"
+      - "traefik.http.routers.graphql.tls=true"
+      - "traefik.http.routers.graphql.tls.certresolver=cloudflare"
+      # Media handling route
+      - "traefik.http.routers.media.rule=Host(`surmont.ro`) && PathPrefix(`/media`)"
+      - "traefik.http.routers.media.service=media-service"
+      - "traefik.http.routers.media.entrypoints=websecure"
+      - "traefik.http.routers.media.tls=true"
+      - "traefik.http.routers.media.tls.certresolver=cloudflare"
+      # Thumbnail handling route
+      - "traefik.http.routers.thumbnail.rule=Host(`surmont.ro`) && PathPrefix(`/thumbnail`)"
+      - "traefik.http.routers.thumbnail.service=thumbnail-service"
+      - "traefik.http.routers.thumbnail.entrypoints=websecure"
+      - "traefik.http.routers.thumbnail.tls=true"
+      - "traefik.http.routers.thumbnail.tls.certresolver=cloudflare"
     restart: unless-stopped
     networks:
       - saleor-backend-tier
@@ -14,11 +44,11 @@ services:
     depends_on:
       - db
       - redis
-      - jaeger
     volumes:
       # shared volume between worker and api for media
       - saleor-media:/app/media
       - /etc/localtime:/etc/localtime:ro
+      - ./credentials.json:/app/credentials.json:ro  # Mount your GCP credentials
     env_file:
       - common.env
       - backend.env
@@ -26,8 +56,13 @@ services:
   dashboard:
     pull_policy: always
     image: ghcr.io/saleor/saleor-dashboard:latest
-    ports:
-      - 9000:80
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.saleor-dashboard.rule=Host(`surmont.ro`) && PathPrefix(`/dashboard`)"
+      - "traefik.http.routers.saleor-dashboard.entrypoints=websecure"
+      - "traefik.http.routers.saleor-dashboard.tls=true"
+      - "traefik.http.routers.saleor-dashboard.tls.certresolver=cloudflare"
+      - "traefik.http.services.saleor-dashboard.loadbalancer.server.port=80"
     networks:
       - saleor-backend-tier
     env_file:
@@ -48,7 +83,7 @@ services:
     volumes:
       - saleor-db:/var/lib/postgresql/data
       - ./replica_user.sql:/docker-entrypoint-initdb.d/replica_user.sql
-      - ./docker/db/postgresql.conf:/var/lib/postgresql/data/postgresql.conf
+#      - ./docker/db/postgresql.conf:/var/lib/postgresql/data/postgresql.conf
       - /etc/localtime:/etc/localtime:ro
     env_file:
       - backend.env
@@ -77,11 +112,11 @@ services:
       - backend.env
     depends_on:
       - redis
-      - mailpit
     volumes:
       # shared volume between worker and api for media
       - saleor-media:/app/media
       - /etc/localtime:/etc/localtime:ro
+      - ./credentials.json:/app/credentials.json:ro  # Mount your GCP credentials
       - type: tmpfs
         target: /tmp
 
@@ -98,38 +133,11 @@ services:
       - backend.env
     depends_on:
       - redis
-      - mailpit
     volumes:
       # shared volume between worker and api for media
       - saleor-media:/app/media
       - /etc/localtime:/etc/localtime:ro
-
-  jaeger:
-    image: jaegertracing/all-in-one
-    ports:
-      - "5775:5775/udp"
-      - "6831:6831/udp"
-      - "6832:6832/udp"
-      - "5778:5778"
-      - "16686:16686"
-      - "14268:14268"
-      - "9411:9411"
-    restart: unless-stopped
-    networks:
-      - saleor-backend-tier
-    volumes:
-      - /etc/localtime:/etc/localtime:ro
-
-  mailpit:
-    image: axllent/mailpit
-    ports:
-      - 1025:1025 # smtp server
-      - 8025:8025 # web ui. Visit http://localhost:8025/ to check emails
-    restart: unless-stopped
-    networks:
-      - saleor-backend-tier
-    volumes:
-      - /etc/localtime:/etc/localtime:ro
+      - ./credentials.json:/app/credentials.json:ro  # Mount your GCP credentials
 
 volumes:
   saleor-db:

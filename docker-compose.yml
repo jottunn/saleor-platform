@@ -55,7 +55,7 @@ services:
 
   dashboard:
     pull_policy: always
-    image: ghcr.io/saleor/saleor-dashboard:latest
+    image: ghcr.io/saleor/saleor-dashboard:3.21.1
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.saleor-dashboard.rule=Host(${DOMAIN}) && PathPrefix(`/dashboard`)"

@@ -9,7 +9,7 @@ services:
       - "traefik.enable=true"
       # JWKS route
       - "traefik.http.services.jwks-service.loadbalancer.server.port=8000"
-      - "traefik.http.routers.jwks.rule=Host(${DOMAIN}) && PathPrefix(`/.well-known`)"
+      - "traefik.http.routers.jwks.rule=Host(`${DOMAIN}`) && PathPrefix(`/.well-known`)"
       - "traefik.http.routers.jwks.service=jwks-service"
       - "traefik.http.routers.jwks.entrypoints=websecure"
       - "traefik.http.routers.jwks.tls=true"
@@ -19,19 +19,19 @@ services:
       - "traefik.http.services.media-service.loadbalancer.server.port=8000"
       - "traefik.http.services.thumbnail-service.loadbalancer.server.port=8000"
       # GraphQL API route
-      - "traefik.http.routers.graphql.rule=Host(${DOMAIN}) && PathPrefix(`/graphql`)"
+      - "traefik.http.routers.graphql.rule=Host(`${DOMAIN}`) && PathPrefix(`/graphql`)"
       - "traefik.http.routers.graphql.service=graphql-service"
       - "traefik.http.routers.graphql.entrypoints=websecure"
       - "traefik.http.routers.graphql.tls=true"
       - "traefik.http.routers.graphql.tls.certresolver=cloudflare"
       # Media handling route
-      - "traefik.http.routers.media.rule=Host(${DOMAIN}) && PathPrefix(`/media`)"
+      - "traefik.http.routers.media.rule=Host(`${DOMAIN}`) && PathPrefix(`/media`)"
       - "traefik.http.routers.media.service=media-service"
       - "traefik.http.routers.media.entrypoints=websecure"
       - "traefik.http.routers.media.tls=true"
       - "traefik.http.routers.media.tls.certresolver=cloudflare"
       # Thumbnail handling route
-      - "traefik.http.routers.thumbnail.rule=Host(${DOMAIN}) && PathPrefix(`/thumbnail`)"
+      - "traefik.http.routers.thumbnail.rule=Host(`${DOMAIN}`) && PathPrefix(`/thumbnail`)"
       - "traefik.http.routers.thumbnail.service=thumbnail-service"
       - "traefik.http.routers.thumbnail.entrypoints=websecure"
       - "traefik.http.routers.thumbnail.tls=true"
@@ -58,7 +58,7 @@ services:
     image: ghcr.io/saleor/saleor-dashboard:3.21.1
     labels:
       - "traefik.enable=true"
-      - "traefik.http.routers.saleor-dashboard.rule=Host(${DOMAIN}) && PathPrefix(`/dashboard`)"
+      - "traefik.http.routers.saleor-dashboard.rule=Host(`${DOMAIN}`) && PathPrefix(`/dashboard`)"
       - "traefik.http.routers.saleor-dashboard.entrypoints=websecure"
       - "traefik.http.routers.saleor-dashboard.tls=true"
       - "traefik.http.routers.saleor-dashboard.tls.certresolver=cloudflare"

@@ -58,7 +58,7 @@ services:
     image: ghcr.io/saleor/saleor-dashboard:3.21.1
     labels:
       - "traefik.enable=true"
-      - "traefik.http.routers.saleor-dashboard.rule=Host(`${DOMAIN}`) && PathPrefix(`/dashboard`)"
+      - "traefik.http.routers.saleor-dashboard.rule=Host(`dashboard.${DOMAIN}`)"
       - "traefik.http.routers.saleor-dashboard.entrypoints=websecure"
       - "traefik.http.routers.saleor-dashboard.tls=true"
       - "traefik.http.routers.saleor-dashboard.tls.certresolver=cloudflare"

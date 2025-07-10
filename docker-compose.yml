@@ -19,7 +19,7 @@ services:
       - "traefik.http.services.media-service.loadbalancer.server.port=8000"
       - "traefik.http.services.thumbnail-service.loadbalancer.server.port=8000"
       # GraphQL API route
-      - "traefik.http.routers.graphql.rule=Host(`${DOMAIN}`) && PathPrefix(`/graphql`)"
+      - "traefik.http.routers.graphql.rule=Host(`api.${DOMAIN}`)"
       - "traefik.http.routers.graphql.service=graphql-service"
       - "traefik.http.routers.graphql.entrypoints=websecure"
       - "traefik.http.routers.graphql.tls=true"
